@@ -110,8 +110,29 @@ export default function App() {
     setAskLoading(false);
   };
 
+  const deleteWorkout = async (workoutId) => {
+    try {
+      await fetch(`${API}/workouts/${workoutId}?user_id=${userId}`, { method: "DELETE" });
+      fetchWorkouts();
+      fetchStats();
+    } catch {}
+  };
+
   const formatDate = (iso) =>
     new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  const greeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  };
+
+  const todayLabel = new Date().toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric",
+  });
+
+  const firstName = user?.user_metadata?.full_name?.split(" ")[0] || "";
 
   const Logo = () => (
     <div className="logo-mark">
@@ -190,20 +211,26 @@ export default function App() {
 
       <main className="main">
 
-        {/* Stats strip */}
-        {stats && (
-          <div className="stats-strip">
-            <div className="stat">
-              <span className="stat-value">{stats.total_workouts}</span>
-              <span className="stat-label">Total workouts</span>
-            </div>
-            <div className="stat-divider" />
-            <div className="stat">
-              <span className="stat-value">{stats.this_week}</span>
-              <span className="stat-label">This week</span>
-            </div>
+        {/* Greeting bar */}
+        <div className="greeting-bar">
+          <div className="greeting-left">
+            <p className="greeting-text">{greeting()}{firstName ? `, ${firstName}` : ""}.</p>
+            <p className="greeting-date">{todayLabel}</p>
           </div>
-        )}
+          {stats && (
+            <div className="greeting-stats">
+              <div className="stat">
+                <span className="stat-value">{stats.total_workouts}</span>
+                <span className="stat-label">Total workouts</span>
+              </div>
+              <div className="stat-divider" />
+              <div className="stat">
+                <span className="stat-value">{stats.this_week}</span>
+                <span className="stat-label">This week</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Log + Recent grid */}
         <div className="grid">
@@ -243,7 +270,22 @@ export default function App() {
                 ? <p className="feed-empty">No workouts yet — log your first one.</p>
                 : workouts.map((w) => (
                     <div className="feed-item" key={w.id}>
-                      <span className="feed-date">{formatDate(w.created_at)}</span>
+                      <div className="feed-item-header">
+                        <span className="feed-date">{formatDate(w.created_at)}</span>
+                        <button
+                          className="btn-delete"
+                          onClick={() => deleteWorkout(w.id)}
+                          title="Delete workout"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                               strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6l-1 14H6L5 6" />
+                            <path d="M10 11v6M14 11v6" />
+                            <path d="M9 6V4h6v2" />
+                          </svg>
+                        </button>
+                      </div>
                       <p className="feed-text">{w.raw_text}</p>
                     </div>
                   ))

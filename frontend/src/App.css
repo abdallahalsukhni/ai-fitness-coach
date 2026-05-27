@@ -238,6 +238,41 @@ body {
   margin-bottom: 16px;
 }
 
+/* ── Greeting bar ──────────────────────────────────────────── */
+.greeting-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #161616;
+  border: 1px solid #1e1e1e;
+  border-radius: 16px;
+  padding: 24px 32px;
+}
+
+.greeting-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.greeting-text {
+  font-size: 22px;
+  font-weight: 500;
+  color: #e0ddd8;
+  letter-spacing: -0.02em;
+}
+
+.greeting-date {
+  font-size: 13px;
+  color: #444;
+}
+
+.greeting-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
 /* ── Stats strip ───────────────────────────────────────────── */
 .stats-strip {
   display: flex;
@@ -378,6 +413,13 @@ body {
 }
 .feed-item:last-child { border-bottom: none; }
 
+.feed-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
 .feed-date {
   font-family: 'DM Mono', monospace;
   font-size: 9px;
@@ -385,9 +427,27 @@ body {
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: #1D9E75;
-  display: block;
-  margin-bottom: 6px;
 }
+
+.btn-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #2a2a2a;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+  opacity: 0;
+}
+
+.feed-item:hover .btn-delete {
+  opacity: 1;
+}
+
+.btn-delete:hover { color: #c0392b; }
+
+.btn-delete svg { width: 13px; height: 13px; }
 
 .feed-text {
   font-size: 14px;
@@ -557,17 +617,24 @@ body {
   .card-feed  { min-height: 220px; }
   .nav-name   { display: none; }
 
+  .greeting-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 20px;
+  }
+
   .stats-strip {
-    padding: 0 20px;
-    gap: 0;
-    height: auto;
     padding: 16px 20px;
+    height: auto;
     flex-wrap: wrap;
     row-gap: 12px;
   }
 
   .stat { padding-right: 0; }
   .stat-divider { display: none; }
+
+  .btn-delete { opacity: 1; }
 
   .ask-row {
     flex-direction: column;

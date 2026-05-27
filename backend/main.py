@@ -156,6 +156,27 @@ def get_stats(user_id: str):
     return {"total_workouts": total, "this_week": this_week}
 
 
+@app.delete("/workouts/{workout_id}")
+def delete_workout(workout_id: int, user_id: str):
+    """
+    Delete a workout by id. Looks up the raw_text for that id, then deletes
+    ALL chunks that share the same raw_text (so the full workout is removed).
+    """
+    result = (
+        supabase.table("workouts")
+        .select("raw_text")
+        .eq("id", workout_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Workout not found.")
+
+    raw_text = result.data[0]["raw_text"]
+    supabase.table("workouts").delete().eq("user_id", user_id).eq("raw_text", raw_text).execute()
+    return {"deleted": True}
+
+
 @app.post("/ask")
 def ask(query: Query):
     """
