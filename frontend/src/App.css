@@ -101,58 +101,72 @@ body {
 .auth-screen {
   min-height: 100vh;
   display: grid;
+  grid-template-rows: 1fr auto;
   place-items: center;
   background: #111;
+  padding: 40px 24px;
 }
 
 .auth-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 16px;
+  gap: 28px;
   text-align: center;
+  max-width: 520px;
+  width: 100%;
 }
 
 .auth-logo {
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
-  margin-bottom: 4px;
+  width: 72px;
+  height: 72px;
+  border-radius: 22px;
 }
 
 .auth-logo svg {
-  width: 26px;
-  height: 26px;
+  width: 36px;
+  height: 36px;
 }
 
 .auth-title {
-  font-size: 26px;
-  font-weight: 500;
+  font-size: 52px;
+  font-weight: 300;
   color: #fff;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.auth-title strong {
+  font-weight: 500;
 }
 
 .auth-sub {
-  font-size: 14px;
+  font-size: 17px;
   color: #555;
   line-height: 1.7;
-  margin-bottom: 8px;
+  max-width: 380px;
 }
 
 .btn-google {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 22px;
+  gap: 12px;
+  padding: 15px 32px;
   background: #fff;
   color: #1a1a1a;
   font-family: 'DM Sans', sans-serif;
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 500;
   border: none;
-  border-radius: 10px;
+  border-radius: 14px;
   cursor: pointer;
   transition: background 0.15s, transform 0.1s;
+  margin-top: 8px;
+}
+
+.btn-google svg {
+  width: 22px;
+  height: 22px;
 }
 
 .btn-google:hover {

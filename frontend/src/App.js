@@ -137,9 +137,11 @@ export default function App() {
               <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
             </svg>
           </div>
-          <h1 className="auth-title">FitCoach</h1>
+          <h1 className="auth-title">
+            Your workouts,<br /><strong>remembered.</strong>
+          </h1>
           <p className="auth-sub">
-            Log workouts in plain English.<br />Ask anything about your history.
+            Log workouts in plain English. Ask anything about your history. Powered by your real data.
           </p>
           <button className="btn-google" onClick={signInWithGoogle}>
             {/* Google "G" logo */}
