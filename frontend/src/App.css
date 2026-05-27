@@ -607,42 +607,29 @@ body {
 
 /* ── Mobile ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  /* Auth: stack vertically on mobile */
-  .auth-screen        { grid-template-columns: 1fr; }
-  .auth-left          { border-right: none; border-bottom: 1px solid #1a1a1a; }
-  .auth-features      { display: none; }
+  /* Auth */
+  .auth-screen    { grid-template-columns: 1fr; }
+  .auth-left      { border-right: none; border-bottom: 1px solid #1a1a1a; justify-content: flex-start; gap: 32px; }
+  .auth-features  { display: none; }
+  .auth-title     { font-size: 34px; }
 
-  .grid       { grid-template-columns: 1fr; }
-  .how-grid   { grid-template-columns: 1fr; }
-  .card-feed  { min-height: 220px; }
-  .nav-name   { display: none; }
+  /* Layout */
+  .grid           { grid-template-columns: 1fr; }
+  .how-grid       { grid-template-columns: 1fr; }
+  .card-feed      { min-height: 220px; }
+  .nav-name       { display: none; }
 
-  .greeting-bar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 16px;
-    padding: 20px;
-  }
+  /* Greeting bar */
+  .greeting-bar   { flex-direction: column; align-items: flex-start; gap: 16px; padding: 20px; }
+  .greeting-text  { font-size: 18px; }
+  .greeting-stats { gap: 24px; }
+  .stat           { padding-right: 0; }
+  .stat-divider   { display: none; }
 
-  .stats-strip {
-    padding: 16px 20px;
-    height: auto;
-    flex-wrap: wrap;
-    row-gap: 12px;
-  }
+  /* Delete always visible on touch screens */
+  .btn-delete     { opacity: 1; }
 
-  .stat { padding-right: 0; }
-  .stat-divider { display: none; }
-
-  .btn-delete { opacity: 1; }
-
-  .ask-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .ask-btn {
-    width: 100%;
-    justify-content: center;
-    padding: 13px;
-  }
+  /* Ask */
+  .ask-row        { flex-direction: column; align-items: stretch; }
+  .ask-btn        { width: 100%; justify-content: center; padding: 13px; }
 }
