@@ -1,5 +1,6 @@
 # Environment variables
 backend/.env
+frontend/.env.local
 
 # Python
 backend/venv/
