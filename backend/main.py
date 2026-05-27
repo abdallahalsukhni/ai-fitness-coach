@@ -121,6 +121,41 @@ def get_workouts(user_id: str, limit: int = 10):
     return {"workouts": unique}
 
 
+@app.get("/stats")
+def get_stats(user_id: str):
+    """
+    Return workout stats for the stats strip: total logged, workouts this week.
+    Deduplicates by raw_text so chunks don't inflate the count.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    result = (
+        supabase.table("workouts")
+        .select("raw_text, created_at")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(500)
+        .execute()
+    )
+
+    week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+
+    seen = set()
+    total = 0
+    this_week = 0
+
+    for row in result.data:
+        if row["raw_text"] in seen:
+            continue
+        seen.add(row["raw_text"])
+        total += 1
+        created = datetime.fromisoformat(row["created_at"].replace("Z", "+00:00"))
+        if created >= week_ago:
+            this_week += 1
+
+    return {"total_workouts": total, "this_week": this_week}
+
+
 @app.post("/ask")
 def ask(query: Query):
     """

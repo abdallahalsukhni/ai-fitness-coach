@@ -24,23 +24,25 @@ export default function App() {
     supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
 
   const signOut = () => supabase.auth.signOut();
+  const userId  = user?.id;
 
-  const userId = user?.id;
-
-  // ── Log state ──────────────────────────────────────────────
+  // ── Log ────────────────────────────────────────────────────
   const [workoutText, setWorkoutText] = useState("");
   const [logResult, setLogResult]     = useState(null);
   const [logError, setLogError]       = useState(false);
   const [logLoading, setLogLoading]   = useState(false);
 
-  // ── Ask state ──────────────────────────────────────────────
+  // ── Ask ────────────────────────────────────────────────────
   const [question, setQuestion]       = useState("");
   const [answer, setAnswer]           = useState(null);
   const [answerError, setAnswerError] = useState(false);
   const [askLoading, setAskLoading]   = useState(false);
 
   // ── Feed ───────────────────────────────────────────────────
-  const [workouts, setWorkouts]       = useState([]);
+  const [workouts, setWorkouts] = useState([]);
+
+  // ── Stats ──────────────────────────────────────────────────
+  const [stats, setStats] = useState(null);
 
   const fetchWorkouts = useCallback(async () => {
     if (!userId) return;
@@ -51,7 +53,18 @@ export default function App() {
     } catch {}
   }, [userId]);
 
-  useEffect(() => { if (userId) fetchWorkouts(); }, [userId, fetchWorkouts]);
+  const fetchStats = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const res  = await fetch(`${API}/stats?user_id=${userId}`);
+      const data = await res.json();
+      setStats(data);
+    } catch {}
+  }, [userId]);
+
+  useEffect(() => {
+    if (userId) { fetchWorkouts(); fetchStats(); }
+  }, [userId, fetchWorkouts, fetchStats]);
 
   const logWorkout = async () => {
     if (!workoutText.trim() || logLoading) return;
@@ -68,6 +81,7 @@ export default function App() {
       setLogResult(data.preview || "Workout logged.");
       setWorkoutText("");
       fetchWorkouts();
+      fetchStats();
     } catch {
       setLogResult("Could not save. Is the server running?");
       setLogError(true);
@@ -109,9 +123,7 @@ export default function App() {
   );
 
   // ── Loading ────────────────────────────────────────────────
-  if (authLoading) return (
-    <div className="splash"><Logo /></div>
-  );
+  if (authLoading) return <div className="splash"><Logo /></div>;
 
   // ── Sign-in ────────────────────────────────────────────────
   if (!user) return (
@@ -120,7 +132,7 @@ export default function App() {
         <Logo />
         <div className="auth-text">
           <h1 className="auth-title">Your workouts,<br /><strong>remembered.</strong></h1>
-          <p className="auth-sub">Log in plain English. Ask anything about your history. Powered by your real data.</p>
+          <p className="auth-sub">Log workouts in plain English. Ask anything about your history. Powered by real AI, not guesswork.</p>
         </div>
         <button className="btn-google" onClick={signInWithGoogle}>
           <svg viewBox="0 0 24 24" width="20" height="20">
@@ -136,7 +148,7 @@ export default function App() {
     </div>
   );
 
-  // ── App ────────────────────────────────────────────────────
+  // ── Main app ───────────────────────────────────────────────
   return (
     <div className="layout">
 
@@ -157,18 +169,35 @@ export default function App() {
         </div>
       </header>
 
-      {/* Page content */}
       <main className="main">
 
-        {/* Two-column grid */}
-        <div className="grid">
+        {/* Stats strip */}
+        {stats && (
+          <div className="stats-strip">
+            <div className="stat">
+              <span className="stat-value">{stats.total_workouts}</span>
+              <span className="stat-label">Total workouts</span>
+            </div>
+            <div className="stat-divider" />
+            <div className="stat">
+              <span className="stat-value">{stats.this_week}</span>
+              <span className="stat-label">This week</span>
+            </div>
+            <div className="stat-divider" />
+            <div className="stat">
+              <span className="stat-value">{stats.total_workouts > 0 ? "Active" : "Just starting"}</span>
+              <span className="stat-label">Status</span>
+            </div>
+          </div>
+        )}
 
-          {/* Log */}
+        {/* Log + Recent grid */}
+        <div className="grid">
           <div className="card">
             <p className="section-label">Log a workout</p>
             <textarea
               className="workout-input"
-              placeholder="e.g. Ran 5km in 28 minutes, then did 3 sets of 10 pull-ups and 4 sets of bench press at 80kg..."
+              placeholder="e.g. Ran 5km in 28 minutes, then did 3 sets of 10 pull-ups and 4 sets of bench at 80kg..."
               value={workoutText}
               onChange={(e) => setWorkoutText(e.target.value)}
             />
@@ -193,7 +222,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Recent */}
           <div className="card card-feed">
             <p className="section-label">Recent workouts</p>
             <div className="feed">
@@ -230,7 +258,6 @@ export default function App() {
               {askLoading ? "Thinking…" : "Ask →"}
             </button>
           </div>
-
           {askLoading && !answer && (
             <div className="answer-box">
               <span className="answer-label">Thinking</span>
@@ -243,6 +270,38 @@ export default function App() {
               <p className="answer-text">{answer}</p>
             </div>
           )}
+        </div>
+
+        {/* How it works */}
+        <div className="how-section">
+          <p className="section-label">How it works</p>
+          <div className="how-grid">
+            <div className="how-card">
+              <div className="how-num">01</div>
+              <h3 className="how-title">Log in plain English</h3>
+              <p className="how-body">
+                No forms, no dropdowns. Describe your workout however feels natural.
+                The backend chunks your text into semantic units for precise retrieval.
+              </p>
+            </div>
+            <div className="how-card">
+              <div className="how-num">02</div>
+              <h3 className="how-title">Embedded and stored</h3>
+              <p className="how-body">
+                Each entry is converted into a 1024-dimensional vector using Voyage AI
+                and stored in Supabase with pgvector — enabling semantic, not keyword, search.
+              </p>
+            </div>
+            <div className="how-card">
+              <div className="how-num">03</div>
+              <h3 className="how-title">Ask anything</h3>
+              <p className="how-body">
+                Your question is embedded the same way, matched against your history by
+                cosine similarity, and the top results are injected into a Claude prompt.
+                Every answer is grounded in your real data.
+              </p>
+            </div>
+          </div>
         </div>
 
       </main>
