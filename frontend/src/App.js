@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "./supabaseClient";
 import "./App.css";
 
@@ -33,11 +33,11 @@ export default function App() {
   const [logLoading, setLogLoading]   = useState(false);
 
   // ── Ask ────────────────────────────────────────────────────
-  const [question, setQuestion]       = useState("");
-  const [answer, setAnswer]           = useState(null);
-  const [answerMeta, setAnswerMeta]   = useState(null); // { pipeline, steps }
-  const [answerError, setAnswerError] = useState(false);
-  const [askLoading, setAskLoading]   = useState(false);
+  const [question, setQuestion]   = useState("");
+  const [askLoading, setAskLoading] = useState(false);
+  const [messages, setMessages]   = useState([]); // { role:"user"|"coach", content, meta?, error? }
+  const [history, setHistory]     = useState([]); // { role:"user"|"assistant", content } sent to backend
+  const threadRef                 = useRef(null);
 
   // ── Feed ───────────────────────────────────────────────────
   const [workouts, setWorkouts] = useState([]);
@@ -90,25 +90,41 @@ export default function App() {
     setLogLoading(false);
   };
 
+  // Auto-scroll thread to bottom on new messages
+  useEffect(() => {
+    if (threadRef.current) {
+      threadRef.current.scrollTop = threadRef.current.scrollHeight;
+    }
+  }, [messages, askLoading]);
+
+  const clearConversation = () => { setMessages([]); setHistory([]); };
+
   const askQuestion = async () => {
     if (!question.trim() || askLoading) return;
+    const q = question;
+    setQuestion("");
     setAskLoading(true);
-    setAnswer(null);
-    setAnswerMeta(null);
-    setAnswerError(false);
+
+    setMessages(prev => [...prev, { role: "user", content: q }]);
+
     try {
       const res  = await fetch(`${API}/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, question }),
+        body: JSON.stringify({ user_id: userId, question: q, history }),
       });
       const data = await res.json();
-      setAnswer(data.answer || "No response received.");
-      setAnswerMeta({ pipeline: data.pipeline || "RAG", steps: data.steps || 1 });
-      setQuestion("");
+      const text = data.answer || "No response received.";
+      const meta = { pipeline: data.pipeline || "RAG", steps: data.steps || 1 };
+
+      setMessages(prev => [...prev, { role: "coach", content: text, meta }]);
+      setHistory(prev => [
+        ...prev,
+        { role: "user", content: q },
+        { role: "assistant", content: text },
+      ].slice(-12));
     } catch {
-      setAnswer("Could not reach server.");
-      setAnswerError(true);
+      setMessages(prev => [...prev, { role: "coach", content: "Could not reach server.", error: true }]);
     }
     setAskLoading(false);
   };
@@ -299,7 +315,48 @@ export default function App() {
 
         {/* Ask */}
         <div className="ask-card">
-          <p className="section-label">Ask your coach</p>
+          <div className="ask-card-header">
+            <p className="section-label">Ask your coach</p>
+            {messages.length > 0 && (
+              <button className="btn-clear-convo" onClick={clearConversation}>Clear</button>
+            )}
+          </div>
+
+          {(messages.length > 0 || askLoading) && (
+            <div className="convo-thread" ref={threadRef}>
+              {messages.map((msg, i) =>
+                msg.role === "user" ? (
+                  <div className="convo-user" key={i}>
+                    <span className="convo-label">You</span>
+                    <p className="convo-user-text">{msg.content}</p>
+                  </div>
+                ) : (
+                  <div className="convo-coach" key={i}>
+                    <div className="answer-header">
+                      <span className="answer-label">{msg.error ? "Error" : "Coach"}</span>
+                      {!msg.error && msg.meta && (
+                        <span className={`pipeline-badge ${msg.meta.pipeline === "RLM" ? "pipeline-rlm" : "pipeline-rag"}`}>
+                          {msg.meta.pipeline === "RLM"
+                            ? `RLM · ${msg.meta.steps} retrieval step${msg.meta.steps !== 1 ? "s" : ""}`
+                            : "RAG"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="answer-text">{msg.content}</p>
+                  </div>
+                )
+              )}
+              {askLoading && (
+                <div className="convo-coach">
+                  <div className="answer-header">
+                    <span className="answer-label">Thinking</span>
+                  </div>
+                  <div className="dots"><span /><span /><span /></div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="ask-row">
             <input
               className="ask-input"
@@ -314,30 +371,9 @@ export default function App() {
               onClick={askQuestion}
               disabled={askLoading || !question.trim()}
             >
-              {askLoading ? "Thinking…" : "Ask →"}
+              Ask →
             </button>
           </div>
-          {askLoading && !answer && (
-            <div className="answer-box">
-              <span className="answer-label">Thinking</span>
-              <div className="dots"><span /><span /><span /></div>
-            </div>
-          )}
-          {answer && (
-            <div className={`answer-box ${answerError ? "answer-err" : ""}`}>
-              <div className="answer-header">
-                <span className="answer-label">{answerError ? "Error" : "Coach"}</span>
-                {!answerError && answerMeta && (
-                  <span className={`pipeline-badge ${answerMeta.pipeline === "RLM" ? "pipeline-rlm" : "pipeline-rag"}`}>
-                    {answerMeta.pipeline === "RLM"
-                      ? `RLM · ${answerMeta.steps} retrieval step${answerMeta.steps !== 1 ? "s" : ""}`
-                      : "RAG"}
-                  </span>
-                )}
-              </div>
-              <p className="answer-text">{answer}</p>
-            </div>
-          )}
         </div>
 
         {/* How it works */}
@@ -345,32 +381,37 @@ export default function App() {
           <p className="section-label">Under the hood</p>
           <div className="how-grid">
             <div className="how-card">
-              <div className="how-num">RAG</div>
-              <h3 className="how-title">Single-pass retrieval</h3>
+              <div className="how-num">CHUNK</div>
+              <h3 className="how-title">Contextual chunking</h3>
               <p className="how-body">
-                Simple questions run one retrieval pass. Your question is embedded with
-                Voyage AI (<code>input_type="query"</code>), matched against stored workout
-                chunks by cosine similarity, and the top results are injected directly into
-                a Claude prompt as grounded context.
+                Every chunk gets a Claude-generated context sentence prepended before
+                embedding. A chunk reading "increased weight to 90kg" becomes "This is
+                from a chest session where tricep work preceded the bench press —
+                increased weight to 90kg." Exercise order, session type, and pre-fatigue
+                context are encoded in the vector, not lost at the chunk boundary.
+              </p>
+            </div>
+            <div className="how-card">
+              <div className="how-num">HYBRID</div>
+              <h3 className="how-title">Hybrid retrieval + reranking</h3>
+              <p className="how-body">
+                Each question runs two searches in parallel — pgvector cosine similarity
+                for semantic matches and Postgres BM25 full-text search for exact keyword
+                matches — then merges both ranked lists with Reciprocal Rank Fusion. A
+                cross-encoder reranker reads the query and each candidate together in one
+                forward pass, scoring 20 candidates down to 5 by actual relevance, not
+                just vector distance.
               </p>
             </div>
             <div className="how-card">
               <div className="how-num">RLM</div>
               <h3 className="how-title">Recursive retrieval loop</h3>
               <p className="how-body">
-                Complex analytical questions (trends, plateaus, patterns) trigger a
-                multi-step loop. Each step the model decides what to search for next
-                based on distilled findings from the previous step — up to 5 iterations
-                before a final synthesis call reasons over all collected evidence.
-              </p>
-            </div>
-            <div className="how-card">
-              <div className="how-num">∅</div>
-              <h3 className="how-title">Built from scratch</h3>
-              <p className="how-body">
-                No LangChain, no LlamaIndex. Chunking, embedding, vector search, query
-                classification, and the retrieval loop are all explicit code with
-                documented decisions — every parameter is a choice, not a default.
+                Complex analytical questions trigger a loop: the model decides what to
+                search for next, retrieves and distills findings across up to 5 steps,
+                then synthesizes a final answer from all collected evidence — not raw
+                chunks. Every answer shows a pipeline badge: <code>RAG</code> for
+                single-pass, <code>RLM · N steps</code> for recursive.
               </p>
             </div>
           </div>

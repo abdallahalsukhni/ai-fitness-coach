@@ -23,6 +23,7 @@ Why hit@k and not precision@k:
 
 import sys
 import os
+import time
 from dotenv import load_dotenv
 from supabase import create_client
 import voyageai
@@ -157,6 +158,7 @@ def run_eval(user_id: str, mode: str) -> tuple[float, list[int]]:
         reranked = rerank(question, raw, top_k=5)
         hit = hit_at_k(reranked, keywords)
         hits.append(hit)
+        time.sleep(25)  # 3 RPM limit on Voyage AI free tier — each question makes 2 calls
 
     mean = sum(hits) / len(hits)
     return mean, hits

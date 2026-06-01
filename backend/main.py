@@ -38,9 +38,9 @@ SYSTEM_PROMPT = (
     "You are a fitness coach with access to the user's workout history.\n\n"
     "Only answer from the retrieved context provided. If the answer is not in the context, "
     "say so explicitly — do not guess or infer beyond what is provided.\n\n"
-    "Be concise and conversational. Do not use bullet points for simple answers.\n\n"
-    "If a retrieved entry is vague or lacks detail, acknowledge that and ask for specifics "
-    "rather than interpreting loosely."
+    "Be concise and direct. Do not use bullet points for simple answers.\n\n"
+    "You have access to the conversation history — use it to maintain context across "
+    "follow-up questions. Never ask clarifying questions back; answer with what you have."
 )
 
 
@@ -50,9 +50,14 @@ class WorkoutLog(BaseModel):
     user_id: str
     text: str
 
+class HistoryMessage(BaseModel):
+    role: str     # "user" or "assistant"
+    content: str
+
 class Query(BaseModel):
     user_id: str
     question: str
+    history: list[HistoryMessage] = []
 
 
 # ─── Chunking ──────────────────────────────────────────────────────────────────
@@ -289,29 +294,32 @@ def distill_finding(query: str, chunks: list[str]) -> str:
     return response.content[0].text.strip()
 
 
-def synthesize(question: str, findings: list[dict]) -> str:
+def synthesize(question: str, findings: list[dict], history: list, today: str) -> str:
     """Final synthesis call — reasons over distilled findings, not raw chunks."""
     findings_text = "\n\n".join(
         f"Finding {i+1} (searched '{f['query']}'):\n{f['finding']}"
         for i, f in enumerate(findings)
     )
+    messages = [{"role": m.role, "content": m.content} for m in history]
+    messages.append({
+        "role": "user",
+        "content": (
+            f"Today's date: {today}\n\n"
+            "Based on these retrieved findings from my workout history, answer my question.\n\n"
+            f"Findings:\n{findings_text}\n\n"
+            f"Question: {question}"
+        ),
+    })
     response = anthropic_client.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=1024,
         system=SYSTEM_PROMPT,
-        messages=[{
-            "role": "user",
-            "content": (
-                "Based on these retrieved findings from my workout history, answer my question.\n\n"
-                f"Findings:\n{findings_text}\n\n"
-                f"Question: {question}"
-            ),
-        }],
+        messages=messages,
     )
     return response.content[0].text.strip()
 
 
-def rlm_answer(question: str, user_id: str) -> dict:
+def rlm_answer(question: str, user_id: str, history: list, today: str) -> dict:
     """
     Recursive retrieval loop. Each step the model decides what to search for
     next based on what it already found. Each sub-call receives only distilled
@@ -331,7 +339,7 @@ def rlm_answer(question: str, user_id: str) -> dict:
         finding = distill_finding(next_query, reranked)
         findings.append({"query": next_query, "finding": finding})
 
-    answer = synthesize(question, findings)
+    answer = synthesize(question, findings, history, today)
     return {"answer": answer, "steps": len(findings), "pipeline": "RLM"}
 
 
@@ -471,15 +479,20 @@ def delete_workout(workout_id: int, user_id: str):
 
 @app.post("/ask")
 def ask(query: Query):
+    from datetime import date
     if not query.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    today = date.today().strftime("%B %d, %Y")
+    # Limit history to last 6 exchanges (12 messages) to avoid token bloat.
+    history = query.history[-12:]
 
     # Classify — routes complex analytical questions to RLM, simple lookups to RAG.
     route = classify_question(query.question)
 
     if route == "COMPLEX":
         try:
-            return rlm_answer(query.question, query.user_id)
+            return rlm_answer(query.question, query.user_id, history, today)
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"RLM pipeline error: {e}")
 
@@ -516,19 +529,24 @@ def ask(query: Query):
         f"[Workout {i+1}] {c}" for i, c in enumerate(chunks)
     )
 
+    # Build messages: prior conversation history, then the new question with fresh context.
+    messages = [{"role": m.role, "content": m.content} for m in history]
+    messages.append({
+        "role": "user",
+        "content": (
+            f"Today's date: {today}\n\n"
+            f"My workout history (most relevant entries):\n\n"
+            f"{context}\n\n"
+            f"Question: {query.question}"
+        ),
+    })
+
     try:
         response = anthropic_client.messages.create(
             model="claude-sonnet-4-5",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"My workout history (most relevant entries):\n\n"
-                    f"{context}\n\n"
-                    f"Question: {query.question}"
-                ),
-            }],
+            messages=messages,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM error (Anthropic): {e}")

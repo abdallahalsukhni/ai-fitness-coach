@@ -28,7 +28,8 @@ body {
 .auth-left {
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: center;
+  gap: clamp(48px, 8vh, 96px);
   padding: clamp(32px, 6vw, 72px);
   border-right: 1px solid #1a1a1a;
 }
@@ -62,8 +63,8 @@ body {
 .auth-title strong { font-weight: 500; }
 
 .auth-sub {
-  font-size: 18px;
-  color: #555;
+  font-size: 17px;
+  color: #666;
   line-height: 1.75;
   max-width: 420px;
 }
@@ -80,7 +81,7 @@ body {
   align-items: center;
   gap: 10px;
   font-size: 14px;
-  color: #444;
+  color: #555;
 }
 
 .auth-feature-dot {
@@ -467,6 +468,68 @@ body {
   padding: 28px;
 }
 
+.ask-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.ask-card-header .section-label { margin-bottom: 0; }
+
+.btn-clear-convo {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #2e2e2e;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 0.15s;
+}
+.btn-clear-convo:hover { color: #555; }
+
+/* ── Conversation thread ───────────────────────────────────── */
+.convo-thread {
+  max-height: 480px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #222 transparent;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #1e1e1e;
+  padding-bottom: 4px;
+}
+
+.convo-user {
+  padding: 16px 0;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+.convo-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #333;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.convo-user-text {
+  font-size: 14px;
+  color: #555;
+  line-height: 1.6;
+}
+
+.convo-coach {
+  padding: 16px 0;
+  border-bottom: 1px solid #1a1a1a;
+}
+.convo-coach:last-child { border-bottom: none; }
+
 .ask-row {
   display: flex;
   gap: 10px;
@@ -644,10 +707,20 @@ body {
 /* ── Mobile ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   /* Auth */
-  .auth-screen    { grid-template-columns: 1fr; }
-  .auth-left      { border-right: none; border-bottom: 1px solid #1a1a1a; justify-content: flex-start; gap: 32px; }
+  .auth-screen    { grid-template-columns: 1fr; min-height: 100vh; }
+  .auth-left      {
+    border-right: none;
+    border-bottom: 1px solid #1a1a1a;
+    justify-content: flex-start;
+    gap: 28px;
+    padding: 36px 28px 32px;
+  }
+  .auth-left-top  { margin-bottom: 4px; }
   .auth-features  { display: none; }
-  .auth-title     { font-size: 34px; }
+  .auth-title     { font-size: 36px; line-height: 1.08; }
+  .auth-sub       { font-size: 15px; }
+  .auth-right     { padding: 36px 28px; align-items: flex-start; }
+  .auth-card      { max-width: 100%; gap: 24px; }
 
   /* Layout */
   .grid           { grid-template-columns: 1fr; }
