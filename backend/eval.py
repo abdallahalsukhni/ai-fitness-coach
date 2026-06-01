@@ -30,7 +30,7 @@ from anthropic import Anthropic
 
 load_dotenv()
 
-USER_ID = ""   # paste your Supabase user UUID here
+USER_ID = "6fe06b64-be37-48a9-92e5-9ed06fb2db33"
 
 voyage_client    = voyageai.Client(api_key=os.getenv("VOYAGE_API_KEY"))
 supabase         = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))

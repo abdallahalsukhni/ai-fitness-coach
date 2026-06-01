@@ -139,13 +139,18 @@ def hyde_embed(question: str) -> list[float]:
     Hypothetical Document Embedding (HyDE — Gao et al., 2022).
 
     Query vectors and document vectors occupy different regions of embedding space.
-    A question like "why is my bench weak?" produces a vector that doesn't look
-    much like any stored workout entry. HyDE sidesteps this by generating a
-    hypothetical workout entry that would answer the question, then embedding
-    that document instead of the raw question.
+    HyDE sidesteps this by generating a hypothetical workout entry that would answer
+    the question, then embedding that document instead of the raw question.
 
     Uses input_type="document" — we're embedding a generated document, not a query.
-    This is intentional: the whole point is to land in document space, not query space.
+
+    NOT used in the main pipeline. Evaluated against the baseline via hit@5 eval
+    (see eval.py) and found not to improve retrieval for this use case. Workout logs
+    contain specific numerical data (exact weights, times, reps) that the hypothetical
+    generation doesn't reliably reproduce — "bench pressed around 80kg" vs the actual
+    "80kg — first time over 80, big milestone." Asymmetric embedding (embed_query with
+    input_type="query") already handles the query-document gap adequately here. HyDE
+    is retained as a function for reference and future testing on different query types.
     """
     response = anthropic_client.messages.create(
         model="claude-sonnet-4-5",

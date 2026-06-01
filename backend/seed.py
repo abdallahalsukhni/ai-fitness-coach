@@ -17,7 +17,7 @@ Designed so eval.py questions are answerable:
 import requests
 import time
 
-USER_ID = ""   # paste your Supabase user UUID here
+USER_ID = "6fe06b64-be37-48a9-92e5-9ed06fb2db33"
 API     = "http://127.0.0.1:8000"
 
 WORKOUTS = [
@@ -109,17 +109,25 @@ def main():
     print(f"Seeding {len(WORKOUTS)} workouts for user {USER_ID}...\n")
 
     for i, text in enumerate(WORKOUTS, 1):
-        try:
-            res = requests.post(
-                f"{API}/log",
-                json={"user_id": USER_ID, "text": text},
-                timeout=30,
-            )
-            data = res.json()
-            print(f"[{i:02d}/{len(WORKOUTS)}] chunks={data.get('chunks_stored', '?')} | {text[:60]}...")
-        except Exception as e:
-            print(f"[{i:02d}] ERROR: {e}")
-        time.sleep(0.5)   # avoid rate-limiting Voyage AI / Claude
+        for attempt in range(3):
+            try:
+                res = requests.post(
+                    f"{API}/log",
+                    json={"user_id": USER_ID, "text": text},
+                    timeout=60,
+                )
+                if res.status_code == 200:
+                    data = res.json()
+                    print(f"[{i:02d}/{len(WORKOUTS)}] chunks={data.get('chunks_stored', '?')} | {text[:60]}...")
+                    break
+                else:
+                    err = res.json().get("detail", res.text)
+                    print(f"[{i:02d}] attempt {attempt+1} failed ({res.status_code}): {err[:80]}")
+                    time.sleep(5)
+            except Exception as e:
+                print(f"[{i:02d}] attempt {attempt+1} error: {e}")
+                time.sleep(5)
+        time.sleep(22)  # 22s between entries — Voyage AI free tier is 3 RPM without payment method
 
     print(f"\nDone. Check Supabase — you should see {len(WORKOUTS)} unique raw_text entries.")
 
