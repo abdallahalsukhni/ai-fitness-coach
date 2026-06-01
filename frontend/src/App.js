@@ -35,6 +35,7 @@ export default function App() {
   // ── Ask ────────────────────────────────────────────────────
   const [question, setQuestion]       = useState("");
   const [answer, setAnswer]           = useState(null);
+  const [answerMeta, setAnswerMeta]   = useState(null); // { pipeline, steps }
   const [answerError, setAnswerError] = useState(false);
   const [askLoading, setAskLoading]   = useState(false);
 
@@ -93,6 +94,7 @@ export default function App() {
     if (!question.trim() || askLoading) return;
     setAskLoading(true);
     setAnswer(null);
+    setAnswerMeta(null);
     setAnswerError(false);
     try {
       const res  = await fetch(`${API}/ask`, {
@@ -102,6 +104,7 @@ export default function App() {
       });
       const data = await res.json();
       setAnswer(data.answer || "No response received.");
+      setAnswerMeta({ pipeline: data.pipeline || "RAG", steps: data.steps || 1 });
       setQuestion("");
     } catch {
       setAnswer("Could not reach server.");
@@ -322,7 +325,16 @@ export default function App() {
           )}
           {answer && (
             <div className={`answer-box ${answerError ? "answer-err" : ""}`}>
-              <span className="answer-label">{answerError ? "Error" : "Coach"}</span>
+              <div className="answer-header">
+                <span className="answer-label">{answerError ? "Error" : "Coach"}</span>
+                {!answerError && answerMeta && (
+                  <span className={`pipeline-badge ${answerMeta.pipeline === "RLM" ? "pipeline-rlm" : "pipeline-rag"}`}>
+                    {answerMeta.pipeline === "RLM"
+                      ? `RLM · ${answerMeta.steps} retrieval step${answerMeta.steps !== 1 ? "s" : ""}`
+                      : "RAG"}
+                  </span>
+                )}
+              </div>
               <p className="answer-text">{answer}</p>
             </div>
           )}
@@ -330,31 +342,35 @@ export default function App() {
 
         {/* How it works */}
         <div className="how-section">
-          <p className="section-label">How it works</p>
+          <p className="section-label">Under the hood</p>
           <div className="how-grid">
             <div className="how-card">
-              <div className="how-num">01</div>
-              <h3 className="how-title">Log in plain English</h3>
+              <div className="how-num">RAG</div>
+              <h3 className="how-title">Single-pass retrieval</h3>
               <p className="how-body">
-                No forms, no dropdowns. Describe your workout however feels natural.
-                The backend chunks your text into semantic units for precise retrieval.
+                Simple questions run one retrieval pass. Your question is embedded with
+                Voyage AI (<code>input_type="query"</code>), matched against stored workout
+                chunks by cosine similarity, and the top results are injected directly into
+                a Claude prompt as grounded context.
               </p>
             </div>
             <div className="how-card">
-              <div className="how-num">02</div>
-              <h3 className="how-title">Embedded and stored</h3>
+              <div className="how-num">RLM</div>
+              <h3 className="how-title">Recursive retrieval loop</h3>
               <p className="how-body">
-                Each entry is converted into a 1024-dimensional vector using Voyage AI
-                and stored in Supabase with pgvector — enabling semantic, not keyword, search.
+                Complex analytical questions (trends, plateaus, patterns) trigger a
+                multi-step loop. Each step the model decides what to search for next
+                based on distilled findings from the previous step — up to 5 iterations
+                before a final synthesis call reasons over all collected evidence.
               </p>
             </div>
             <div className="how-card">
-              <div className="how-num">03</div>
-              <h3 className="how-title">Ask anything</h3>
+              <div className="how-num">∅</div>
+              <h3 className="how-title">Built from scratch</h3>
               <p className="how-body">
-                Your question is embedded the same way, matched against your history by
-                cosine similarity, and the top results are injected into a Claude prompt.
-                Every answer is grounded in your real data.
+                No LangChain, no LlamaIndex. Chunking, embedding, vector search, query
+                classification, and the retrieval loop are all explicit code with
+                documented decisions — every parameter is a choice, not a default.
               </p>
             </div>
           </div>

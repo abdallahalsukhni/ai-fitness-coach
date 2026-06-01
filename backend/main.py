@@ -6,6 +6,7 @@ from supabase import create_client
 from dotenv import load_dotenv
 import voyageai
 import os
+import re
 
 load_dotenv()
 
@@ -23,6 +24,26 @@ voyage_client = voyageai.Client(api_key=os.getenv("VOYAGE_API_KEY"))
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 
+# ─── Constants ─────────────────────────────────────────────────────────────────
+
+# Minimum cosine similarity for a chunk to be included in retrieval context.
+# Below this threshold, the match is semantically too weak to be useful.
+MATCH_THRESHOLD = 0.3
+
+# Hard cap on RLM retrieval steps — controls cost and prevents runaway loops.
+# At 5 steps max, complex queries stay under ~7 total Claude calls per request.
+MAX_RLM_STEPS = 5
+
+SYSTEM_PROMPT = (
+    "You are a fitness coach with access to the user's workout history.\n\n"
+    "Only answer from the retrieved context provided. If the answer is not in the context, "
+    "say so explicitly — do not guess or infer beyond what is provided.\n\n"
+    "Be concise and conversational. Do not use bullet points for simple answers.\n\n"
+    "If a retrieved entry is vague or lacks detail, acknowledge that and ask for specifics "
+    "rather than interpreting loosely."
+)
+
+
 # ─── Models ────────────────────────────────────────────────────────────────────
 
 class WorkoutLog(BaseModel):
@@ -34,57 +55,267 @@ class Query(BaseModel):
     question: str
 
 
-# ─── Helpers ───────────────────────────────────────────────────────────────────
+# ─── Chunking ──────────────────────────────────────────────────────────────────
 
-def embed(text: str) -> list[float]:
-    """Generate a 1024-dim embedding using Voyage AI voyage-3."""
+def chunk_text(text: str, min_length: int = 40) -> list[str]:
+    # Split on newlines and sentence boundaries — workout logs are naturally
+    # structured by exercise, so sentence splits work well without sliding windows.
+    raw_chunks = re.split(r'\n|(?<=[.!?])\s+', text.strip())
+    # Filter chunks shorter than min_length: too short = semantically weak,
+    # noisy vectors that hurt retrieval precision.
+    chunks = [c.strip() for c in raw_chunks if len(c.strip()) >= min_length]
+    return chunks if chunks else [text.strip()]
+
+
+# ─── Contextual Chunking ───────────────────────────────────────────────────────
+
+def add_chunk_context(full_text: str, chunk: str) -> str:
+    """
+    Prepend a Claude-generated context sentence to each chunk before embedding.
+
+    Standard chunking loses surrounding context — a chunk reading "increased weight
+    to 90kg" doesn't carry what exercise that was, or what came before it in the
+    session. This function asks Claude to read the full workout log and generate
+    one sentence that situates the chunk: the exercise, the session type, and
+    exercise order when relevant (e.g. pre-fatigued muscles affect performance).
+
+    The contextualized string is what gets embedded and stored — the vector now
+    encodes both the raw content and its context within the session.
+    """
+    response = anthropic_client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=80,
+        system=(
+            "Given a workout log and a specific excerpt from it, write one concise sentence "
+            "that situates the excerpt. Include: what exercise or activity it describes, "
+            "the session type, and if relevant, what preceded it in the session — "
+            "exercise order matters because prior work affects performance. "
+            "Output only that sentence, nothing else."
+        ),
+        messages=[{
+            "role": "user",
+            "content": f"Full workout log:\n{full_text}\n\nExcerpt:\n{chunk}",
+        }],
+    )
+    context_sentence = response.content[0].text.strip()
+    return f"{context_sentence} {chunk}"
+
+
+# ─── Embedding ─────────────────────────────────────────────────────────────────
+
+def embed_document(text: str) -> list[float]:
+    # input_type="document" — optimizes the vector for storage/retrieval
     result = voyage_client.embed([text], model="voyage-3", input_type="document")
     return result.embeddings[0]
 
 
-def chunk_workout(text: str) -> list[str]:
+def embed_query(text: str) -> list[float]:
+    # input_type="query" — optimizes the vector for asymmetric similarity search
+    # Voyage AI trains document and query embeddings differently so that short
+    # questions match against longer stored passages reliably.
+    result = voyage_client.embed([text], model="voyage-3", input_type="query")
+    return result.embeddings[0]
+
+
+# ─── Retrieval ─────────────────────────────────────────────────────────────────
+
+def retrieve_chunks(query_embedding: list[float], user_id: str, count: int = 20) -> list[str]:
+    # Default count=20 — intentionally over-retrieves for the reranker to select from.
+    # The bi-encoder recall pass prioritizes not missing relevant chunks over precision.
+    results = supabase.rpc(
+        "match_workouts",
+        {
+            "query_embedding": query_embedding,
+            "match_user_id": user_id,
+            "match_count": count,
+            "match_threshold": MATCH_THRESHOLD,
+        },
+    ).execute()
+    return [r["chunk_text"] for r in results.data] if results.data else []
+
+
+def rerank_chunks(query: str, chunks: list[str], top_k: int = 5) -> list[str]:
     """
-    Split a workout log into semantic chunks.
-    Strategy: split on newlines / sentence boundaries, keep chunks ≥ 40 chars.
-    For most workout logs a single chunk is fine; this handles multi-exercise entries.
+    Cross-encoder reranking: second stage of two-stage retrieval.
+
+    The bi-encoder (retrieve_chunks) encoded query and documents independently —
+    fast, but imprecise. This function passes the raw query text and each candidate
+    chunk text to Voyage AI's rerank-2 model, a cross-encoder that reads both
+    together in a single forward pass. Every query token can attend to every
+    document token, allowing it to catch synonyms, implicit connections, and
+    context that cosine similarity misses.
+
+    Can't be run against the full database (O(n) per query — too slow). Applied
+    only to the small candidate set from stage 1, which is why two-stage exists.
     """
-    import re
-    # Split on newlines or periods followed by a space
-    raw = re.split(r"\n+|(?<=\.)\s+", text.strip())
-    chunks = [c.strip() for c in raw if len(c.strip()) >= 40]
-    # If splitting produced nothing useful, treat the whole text as one chunk
-    return chunks if chunks else [text.strip()]
+    if not chunks:
+        return []
+    actual_top_k = min(top_k, len(chunks))
+    result = voyage_client.rerank(query, chunks, model="rerank-2", top_k=actual_top_k)
+    return [item.document for item in result.results]
+
+
+# ─── RLM Pipeline ──────────────────────────────────────────────────────────────
+
+def classify_question(question: str) -> str:
+    """Return 'SIMPLE' or 'COMPLEX'. Defaults to SIMPLE on any parse failure."""
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=10,
+            system=(
+                "Classify the following fitness question as SIMPLE or COMPLEX.\n\n"
+                "COMPLEX = requires connecting multiple data points over time "
+                "(trends, plateaus, volume patterns, comparisons across weeks).\n"
+                "SIMPLE = single factual lookup answerable from one retrieval pass.\n\n"
+                "Respond with exactly one word: SIMPLE or COMPLEX."
+            ),
+            messages=[{"role": "user", "content": question}],
+        )
+        word = response.content[0].text.strip().upper()
+        return "COMPLEX" if word == "COMPLEX" else "SIMPLE"
+    except Exception:
+        return "SIMPLE"
+
+
+def ask_claude_what_to_retrieve(question: str, findings: list[dict]) -> str:
+    """Decide what to search for next, or return 'DONE' if ready to answer."""
+    findings_summary = (
+        "\n".join(
+            f"Step {i+1} — searched '{f['query']}': {f['finding']}"
+            for i, f in enumerate(findings)
+        )
+        if findings
+        else "No findings yet."
+    )
+    response = anthropic_client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=60,
+        system=(
+            "You are directing a fitness data retrieval process. Given a question and "
+            "findings collected so far, decide what to search for next in the workout history. "
+            "Respond with a short search query (under 10 words), or respond with exactly "
+            "'DONE' if you have enough information to answer the question."
+        ),
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Question: {question}\n\n"
+                f"Findings so far:\n{findings_summary}\n\n"
+                "What should I search for next?"
+            ),
+        }],
+    )
+    return response.content[0].text.strip()
+
+
+def distill_finding(query: str, chunks: list[str]) -> str:
+    """Compress raw retrieved chunks into a single focused finding."""
+    if not chunks:
+        return "No relevant data found for this query."
+    context = "\n".join(f"- {c}" for c in chunks)
+    response = anthropic_client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=150,
+        system=(
+            "Distill the following workout data into a single concise finding "
+            "(2-3 sentences max). Extract only what is directly relevant to the query."
+        ),
+        messages=[{
+            "role": "user",
+            "content": f"Query: {query}\n\nWorkout data:\n{context}",
+        }],
+    )
+    return response.content[0].text.strip()
+
+
+def synthesize(question: str, findings: list[dict]) -> str:
+    """Final synthesis call — reasons over distilled findings, not raw chunks."""
+    findings_text = "\n\n".join(
+        f"Finding {i+1} (searched '{f['query']}'):\n{f['finding']}"
+        for i, f in enumerate(findings)
+    )
+    response = anthropic_client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=1024,
+        system=SYSTEM_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": (
+                "Based on these retrieved findings from my workout history, answer my question.\n\n"
+                f"Findings:\n{findings_text}\n\n"
+                f"Question: {question}"
+            ),
+        }],
+    )
+    return response.content[0].text.strip()
+
+
+def rlm_answer(question: str, user_id: str) -> dict:
+    """
+    Recursive retrieval loop. Each step the model decides what to search for
+    next based on what it already found. Each sub-call receives only distilled
+    findings — not raw chunks — keeping context small and focused.
+    """
+    findings = []
+
+    for _ in range(MAX_RLM_STEPS):
+        next_query = ask_claude_what_to_retrieve(question, findings)
+
+        if next_query.upper() == "DONE":
+            break
+
+        q_embedding = embed_query(next_query)
+        raw_chunks = retrieve_chunks(q_embedding, user_id, count=10)
+        reranked = rerank_chunks(next_query, raw_chunks, top_k=5)
+        finding = distill_finding(next_query, reranked)
+        findings.append({"query": next_query, "finding": finding})
+
+    answer = synthesize(question, findings)
+    return {"answer": answer, "steps": len(findings), "pipeline": "RLM"}
 
 
 # ─── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/")
-def root():
-    return {"status": "AI Fitness Coach API is running"}
+async def health_check():
+    # Static response — no DB or API calls.
+    # UptimeRobot pings this every 5 minutes to prevent Render cold starts.
+    return {"status": "ok"}
 
 
 @app.post("/log")
 def log_workout(workout: WorkoutLog):
-    """
-    Receive a plain-English workout, chunk it, embed each chunk with Voyage AI,
-    and store everything in Supabase (pgvector).
-    """
     if not workout.text.strip():
         raise HTTPException(status_code=400, detail="Workout text cannot be empty.")
 
-    chunks = chunk_workout(workout.text)
+    chunks = chunk_text(workout.text)
     rows = []
 
     for chunk in chunks:
-        embedding = embed(chunk)
+        # Contextual chunking — prepend a Claude-generated context sentence before embedding.
+        # This preserves exercise identity and session order, which raw chunks lose.
+        try:
+            contextualized = add_chunk_context(workout.text, chunk)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Context generation error (Anthropic): {e}")
+
+        try:
+            embedding = embed_document(contextualized)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Embedding error (Voyage AI): {e}")
+
         rows.append({
             "user_id": workout.user_id,
-            "raw_text": workout.text,   # full original for display
-            "chunk_text": chunk,         # the portion that was embedded
-            "embedding": embedding,
+            "raw_text": workout.text,          # full original entry — used for feed display
+            "chunk_text": contextualized,       # context-enriched chunk — what gets embedded and retrieved
+            "embedding": embedding,             # 1024-dim vector from Voyage AI voyage-3
         })
 
-    supabase.table("workouts").insert(rows).execute()
+    try:
+        supabase.table("workouts").insert(rows).execute()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Database error (Supabase): {e}")
 
     return {
         "message": "Workout logged!",
@@ -95,20 +326,18 @@ def log_workout(workout: WorkoutLog):
 
 @app.get("/workouts")
 def get_workouts(user_id: str, limit: int = 10):
-    """
-    Return the most recent workout entries for a user (deduplicated by raw_text).
-    Used by the frontend live feed.
-    """
-    result = (
-        supabase.table("workouts")
-        .select("id, raw_text, created_at")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(limit * 3)   # over-fetch to dedup by raw_text
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("workouts")
+            .select("id, raw_text, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit * 3)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Database error (Supabase): {e}")
 
-    # Deduplicate — multiple chunks share the same raw_text
     seen = set()
     unique = []
     for row in result.data:
@@ -123,23 +352,21 @@ def get_workouts(user_id: str, limit: int = 10):
 
 @app.get("/stats")
 def get_stats(user_id: str):
-    """
-    Return workout stats for the stats strip: total logged, workouts this week.
-    Deduplicates by raw_text so chunks don't inflate the count.
-    """
     from datetime import datetime, timedelta, timezone
 
-    result = (
-        supabase.table("workouts")
-        .select("raw_text, created_at")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(500)
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("workouts")
+            .select("raw_text, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(500)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Database error (Supabase): {e}")
 
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-
     seen = set()
     total = 0
     this_week = 0
@@ -158,85 +385,94 @@ def get_stats(user_id: str):
 
 @app.delete("/workouts/{workout_id}")
 def delete_workout(workout_id: int, user_id: str):
-    """
-    Delete a workout by id. Looks up the raw_text for that id, then deletes
-    ALL chunks that share the same raw_text (so the full workout is removed).
-    """
-    result = (
-        supabase.table("workouts")
-        .select("raw_text")
-        .eq("id", workout_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
+    try:
+        result = (
+            supabase.table("workouts")
+            .select("raw_text")
+            .eq("id", workout_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Database error (Supabase): {e}")
+
     if not result.data:
         raise HTTPException(status_code=404, detail="Workout not found.")
 
     raw_text = result.data[0]["raw_text"]
-    supabase.table("workouts").delete().eq("user_id", user_id).eq("raw_text", raw_text).execute()
+
+    try:
+        supabase.table("workouts").delete().eq("user_id", user_id).eq("raw_text", raw_text).execute()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Database error (Supabase): {e}")
+
     return {"deleted": True}
 
 
 @app.post("/ask")
 def ask(query: Query):
-    """
-    Embed the question with Voyage AI (input_type="query"), do pgvector similarity
-    search in Supabase, inject top results as context into a Claude prompt.
-    """
     if not query.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    # 1. Embed the question (use input_type="query" for asymmetric retrieval)
-    q_embedding = voyage_client.embed(
-        [query.question], model="voyage-3", input_type="query"
-    ).embeddings[0]
+    # Classify — routes complex analytical questions to RLM, simple lookups to RAG.
+    route = classify_question(query.question)
 
-    # 2. Vector similarity search via Supabase RPC
-    results = supabase.rpc(
-        "match_workouts",
-        {
-            "query_embedding": q_embedding,
-            "match_user_id": query.user_id,
-            "match_count": 5,
-            "match_threshold": 0.3,
-        },
-    ).execute()
+    if route == "COMPLEX":
+        try:
+            return rlm_answer(query.question, query.user_id)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"RLM pipeline error: {e}")
 
-    # 3. Build context block
-    if results.data:
-        context_entries = [r["chunk_text"] for r in results.data]
-        context = "\n\n".join(
-            f"[Workout {i+1}] {entry}" for i, entry in enumerate(context_entries)
+    # ── RAG pipeline ──────────────────────────────────────────────────────────
+
+    try:
+        q_embedding = embed_query(query.question)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Embedding error (Voyage AI): {e}")
+
+    # Stage 1 — coarse recall: fast bi-encoder vector search over full database
+    try:
+        raw_chunks = retrieve_chunks(q_embedding, query.user_id, count=20)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Vector search error (Supabase): {e}")
+
+    # Guard — no Claude call when context is empty.
+    if not raw_chunks:
+        return {
+            "answer": "I don't have any data relevant to that question. Log some workouts first.",
+            "pipeline": "RAG",
+            "steps": 1,
+        }
+
+    # Stage 2 — precision reranking: cross-encoder reads query + each chunk jointly
+    try:
+        chunks = rerank_chunks(query.question, raw_chunks, top_k=5)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Reranking error (Voyage AI): {e}")
+
+    context = "\n\n".join(
+        f"[Workout {i+1}] {c}" for i, c in enumerate(chunks)
+    )
+
+    try:
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"My workout history (most relevant entries):\n\n"
+                    f"{context}\n\n"
+                    f"Question: {query.question}"
+                ),
+            }],
         )
-    else:
-        context = "(No relevant workouts found in history.)"
-
-    # 4. Prompt pipeline — inject retrieved context into Claude call
-    system_prompt = (
-        "You are a concise, encouraging fitness coach. "
-        "The user's workout entries below are your ONLY source of truth — treat them as facts. "
-        "Never say you lack information about something that is clearly stated in the entries. "
-        "If a log entry is vague (e.g. 'killed it today'), acknowledge it positively and "
-        "suggest the user log specifics next time so you can give better feedback — keep it brief. "
-        "If no entries are relevant, say so in one sentence. "
-        "Do not use excessive formatting or bullet points for short answers. "
-        "Be direct, warm, and under 150 words unless the question genuinely requires more detail."
-    )
-
-    user_message = (
-        f"My workout history (most relevant entries):\n\n"
-        f"{context}\n\n"
-        f"Question: {query.question}"
-    )
-
-    response = anthropic_client.messages.create(
-        model="claude-sonnet-4-5",
-        max_tokens=1024,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
-    )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM error (Anthropic): {e}")
 
     return {
         "answer": response.content[0].text,
-        "sources_used": len(results.data) if results.data else 0,
+        "pipeline": "RAG",
+        "steps": 1,
     }
