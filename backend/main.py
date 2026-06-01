@@ -134,6 +134,61 @@ def retrieve_chunks(query_embedding: list[float], user_id: str, count: int = 20)
     return [r["chunk_text"] for r in results.data] if results.data else []
 
 
+def hyde_embed(question: str) -> list[float]:
+    """
+    Hypothetical Document Embedding (HyDE — Gao et al., 2022).
+
+    Query vectors and document vectors occupy different regions of embedding space.
+    A question like "why is my bench weak?" produces a vector that doesn't look
+    much like any stored workout entry. HyDE sidesteps this by generating a
+    hypothetical workout entry that would answer the question, then embedding
+    that document instead of the raw question.
+
+    Uses input_type="document" — we're embedding a generated document, not a query.
+    This is intentional: the whole point is to land in document space, not query space.
+    """
+    response = anthropic_client.messages.create(
+        model="claude-sonnet-4-5",
+        max_tokens=80,
+        system=(
+            "Write a realistic 1-2 sentence workout log entry that would directly answer "
+            "the following question. Write it as a plain first-person workout description, "
+            "not as an answer to a question."
+        ),
+        messages=[{"role": "user", "content": question}],
+    )
+    hypothetical = response.content[0].text.strip()
+    return embed_document(hypothetical)
+
+
+def retrieve_chunks_hybrid(
+    query_embedding: list[float], query_text: str, user_id: str, count: int = 20
+) -> list[str]:
+    """
+    Hybrid retrieval: vector search (semantic) + BM25 full-text (keyword),
+    merged with Reciprocal Rank Fusion.
+
+    Pure semantic search misses exact matches — a question about "100kg" may
+    not rank the entry containing "100kg" highly if the semantic signal is weak.
+    BM25 catches keyword matches that semantic search misses. RRF rewards chunks
+    that score well in both lists: 1/(60 + rank_vector) + 1/(60 + rank_bm25).
+    The constant 60 is from the original RRF paper — it controls rank sensitivity.
+
+    Requires the match_workouts_hybrid SQL function and GIN index in Supabase.
+    """
+    results = supabase.rpc(
+        "match_workouts_hybrid",
+        {
+            "query_embedding": query_embedding,
+            "query_text": query_text,
+            "match_user_id": user_id,
+            "match_count": count,
+            "match_threshold": MATCH_THRESHOLD,
+        },
+    ).execute()
+    return [r["chunk_text"] for r in results.data] if results.data else []
+
+
 def rerank_chunks(query: str, chunks: list[str], top_k: int = 5) -> list[str]:
     """
     Cross-encoder reranking: second stage of two-stage retrieval.
@@ -266,7 +321,7 @@ def rlm_answer(question: str, user_id: str) -> dict:
             break
 
         q_embedding = embed_query(next_query)
-        raw_chunks = retrieve_chunks(q_embedding, user_id, count=10)
+        raw_chunks = retrieve_chunks_hybrid(q_embedding, next_query, user_id, count=10)
         reranked = rerank_chunks(next_query, raw_chunks, top_k=5)
         finding = distill_finding(next_query, reranked)
         findings.append({"query": next_query, "finding": finding})
@@ -430,11 +485,13 @@ def ask(query: Query):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Embedding error (Voyage AI): {e}")
 
-    # Stage 1 — coarse recall: fast bi-encoder vector search over full database
+    # Stage 1 — hybrid recall: vector search (semantic) + BM25 (keyword) merged via RRF.
+    # Covers both failure modes: semantic search misses exact numbers/names,
+    # keyword search misses conceptual queries. RRF rewards chunks that rank well in both.
     try:
-        raw_chunks = retrieve_chunks(q_embedding, query.user_id, count=20)
+        raw_chunks = retrieve_chunks_hybrid(q_embedding, query.question, query.user_id, count=20)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Vector search error (Supabase): {e}")
+        raise HTTPException(status_code=502, detail=f"Retrieval error (Supabase): {e}")
 
     # Guard — no Claude call when context is empty.
     if not raw_chunks:
