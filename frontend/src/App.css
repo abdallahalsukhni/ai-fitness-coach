@@ -28,7 +28,7 @@ body {
 
 .auth-center {
   width: 100%;
-  max-width: 460px;
+  max-width: 640px;
   display: flex;
   flex-direction: column;
 }
@@ -37,7 +37,7 @@ body {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin-bottom: 52px;
+  margin-bottom: 64px;
 }
 
 .auth-brand-name {
@@ -48,34 +48,34 @@ body {
 }
 
 .auth-title {
-  font-size: clamp(36px, 6vw, 56px);
+  font-size: clamp(40px, 7vw, 80px);
   font-weight: 300;
   color: #fff;
   letter-spacing: -0.04em;
-  line-height: 1.05;
-  margin-bottom: 20px;
+  line-height: 1.03;
+  margin-bottom: 24px;
 }
 .auth-title strong { font-weight: 500; }
 
 .auth-sub {
-  font-size: 16px;
+  font-size: 18px;
   color: #666;
   line-height: 1.75;
-  margin-bottom: 32px;
+  margin-bottom: 36px;
 }
 
 .auth-features {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 44px;
+  gap: 14px;
+  margin-bottom: 52px;
 }
 
 .auth-feature {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 14px;
+  gap: 12px;
+  font-size: 15px;
   color: #555;
 }
 
