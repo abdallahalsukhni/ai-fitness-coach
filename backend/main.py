@@ -34,6 +34,11 @@ MATCH_THRESHOLD = 0.3
 # At 5 steps max, complex queries stay under ~7 total Claude calls per request.
 MAX_RLM_STEPS = 5
 
+
+def _is_rate_limit(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "rate" in msg or "429" in msg or "too many" in msg or "payment" in msg
+
 SYSTEM_PROMPT = (
     "You are a fitness coach with access to the user's workout history.\n\n"
     "Only answer from the retrieved context provided. If the answer is not in the context, "
@@ -372,12 +377,12 @@ def log_workout(workout: WorkoutLog):
         try:
             contextualized = add_chunk_context(workout.text, chunk)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Context generation error (Anthropic): {e}")
+            raise HTTPException(status_code=502, detail="Could not process workout — please try again.")
 
         try:
             embedding = embed_document(contextualized)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Embedding error (Voyage AI): {e}")
+            raise HTTPException(status_code=502, detail="Could not process workout — please try again.")
 
         rows.append({
             "user_id": workout.user_id,
@@ -389,7 +394,7 @@ def log_workout(workout: WorkoutLog):
     try:
         supabase.table("workouts").insert(rows).execute()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Database error (Supabase): {e}")
+        raise HTTPException(status_code=502, detail="Could not save workout — please try again.")
 
     return {
         "message": "Workout logged!",
@@ -500,14 +505,18 @@ def ask(query: Query):
         try:
             return rlm_answer(query.question, query.user_id, history, today)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"RLM pipeline error: {e}")
+            if _is_rate_limit(e):
+                return {"answer": "I'm a bit overloaded right now — please wait a moment and try again.", "pipeline": "RLM", "steps": 0}
+            raise HTTPException(status_code=502, detail="Pipeline error — please try again.")
 
     # ── RAG pipeline ──────────────────────────────────────────────────────────
 
     try:
         q_embedding = embed_query(query.question)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Embedding error (Voyage AI): {e}")
+        if _is_rate_limit(e):
+            return {"answer": "I'm a bit overloaded right now — please wait a moment and try again.", "pipeline": "RAG", "steps": 0}
+        raise HTTPException(status_code=502, detail="Embedding error — please try again.")
 
     # Stage 1 — hybrid recall: vector search (semantic) + BM25 (keyword) merged via RRF.
     # Covers both failure modes: semantic search misses exact numbers/names,
@@ -515,12 +524,12 @@ def ask(query: Query):
     try:
         raw_chunks = retrieve_chunks_hybrid(q_embedding, query.question, query.user_id, count=20)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Retrieval error (Supabase): {e}")
+        raise HTTPException(status_code=502, detail="Retrieval error — please try again.")
 
     # Guard — no Claude call when context is empty.
     if not raw_chunks:
         return {
-            "answer": "I don't have any data relevant to that question. Log some workouts first.",
+            "answer": "I don't have any relevant workout data for that question.",
             "pipeline": "RAG",
             "steps": 1,
         }
@@ -529,7 +538,9 @@ def ask(query: Query):
     try:
         chunks = rerank_chunks(query.question, raw_chunks, top_k=5)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Reranking error (Voyage AI): {e}")
+        if _is_rate_limit(e):
+            return {"answer": "I'm a bit overloaded right now — please wait a moment and try again.", "pipeline": "RAG", "steps": 0}
+        raise HTTPException(status_code=502, detail="Reranking error — please try again.")
 
     context = "\n\n".join(
         f"[Workout {i+1}] {c}" for i, c in enumerate(chunks)
@@ -555,7 +566,7 @@ def ask(query: Query):
             messages=messages,
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"LLM error (Anthropic): {e}")
+        raise HTTPException(status_code=502, detail="LLM error — please try again.")
 
     return {
         "answer": response.content[0].text,
