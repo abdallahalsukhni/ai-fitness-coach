@@ -114,6 +114,12 @@ export default function App() {
         body: JSON.stringify({ user_id: userId, question: q, history }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        const errMsg = data.detail || `Server error (${res.status})`;
+        setMessages(prev => [...prev, { role: "coach", content: errMsg, error: true }]);
+        setAskLoading(false);
+        return;
+      }
       const text = data.answer || "No response received.";
       const meta = { pipeline: data.pipeline || "RAG", steps: data.steps || 1 };
 
