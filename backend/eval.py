@@ -152,7 +152,7 @@ def embed_document(text: str) -> list[float]:
 def hyde_embed(question: str) -> list[float]:
     """Generate a hypothetical workout entry (Anthropic), embed it as a document (Voyage)."""
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=80,
         system=(
             "Write a realistic 1-2 sentence workout log entry that would directly answer "

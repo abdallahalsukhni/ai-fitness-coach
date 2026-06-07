@@ -88,7 +88,7 @@ def add_chunk_context(full_text: str, chunk: str) -> str:
     encodes both the raw content and its context within the session.
     """
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=80,
         system=(
             "Given a workout log and a specific excerpt from it, write one concise sentence "
@@ -158,7 +158,7 @@ def hyde_embed(question: str) -> list[float]:
     is retained as a function for reference and future testing on different query types.
     """
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=80,
         system=(
             "Write a realistic 1-2 sentence workout log entry that would directly answer "
@@ -183,6 +183,12 @@ def retrieve_chunks_hybrid(
     BM25 catches keyword matches that semantic search misses. RRF rewards chunks
     that score well in both lists: 1/(60 + rank_vector) + 1/(60 + rank_bm25).
     The constant 60 is from the original RRF paper — it controls rank sensitivity.
+
+    Eval finding: hybrid scored identically to pure vector search (76.7%) on this
+    dataset. Likely because the corpus is small (~17 entries) so vector recall is
+    already near-ceiling; BM25 adds no signal when the bi-encoder already retrieves
+    the relevant chunks. Retained because the architecture is correct at scale and
+    makes the RRF paper citation a legitimate design decision, not just cargo-culting.
 
     Requires the match_workouts_hybrid SQL function and GIN index in Supabase.
     """
@@ -226,7 +232,7 @@ def classify_question(question: str) -> str:
     """Return 'SIMPLE' or 'COMPLEX'. Defaults to SIMPLE on any parse failure."""
     try:
         response = anthropic_client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=10,
             system=(
                 "Classify the following fitness question as SIMPLE or COMPLEX.\n\n"
@@ -254,7 +260,7 @@ def ask_claude_what_to_retrieve(question: str, findings: list[dict]) -> str:
         else "No findings yet."
     )
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=60,
         system=(
             "You are directing a fitness data retrieval process. Given a question and "
@@ -280,7 +286,7 @@ def distill_finding(query: str, chunks: list[str]) -> str:
         return "No relevant data found for this query."
     context = "\n".join(f"- {c}" for c in chunks)
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=150,
         system=(
             "Distill the following workout data into a single concise finding "
@@ -311,7 +317,7 @@ def synthesize(question: str, findings: list[dict], history: list, today: str) -
         ),
     })
     response = anthropic_client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=1024,
         system=SYSTEM_PROMPT,
         messages=messages,
@@ -543,7 +549,7 @@ def ask(query: Query):
 
     try:
         response = anthropic_client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
             messages=messages,
