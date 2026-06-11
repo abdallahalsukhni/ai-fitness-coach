@@ -133,11 +133,4 @@ ai-fitness-coach/
 │       ├── App.css
 │       └── supabaseClient.js # Supabase auth client
 ├── render.yaml               # Render deployment config
-└── DESIGN_DECISIONS.md       # Full technical design decisions document
 ```
-
----
-
-## Design decisions
-
-See [DESIGN_DECISIONS.md](./DESIGN_DECISIONS.md) for a full writeup covering every technical choice: why Voyage AI over OpenAI embeddings, why pgvector over Pinecone, how asymmetric retrieval works, the chunking strategy, the similarity threshold, and known limitations.
