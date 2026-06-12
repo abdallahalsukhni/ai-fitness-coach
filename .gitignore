@@ -14,3 +14,10 @@ frontend/build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Claude Code internal files
+"CLAUDE (1).md"
+CLAUDE\ (1).md
