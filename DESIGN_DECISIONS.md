@@ -110,7 +110,7 @@ This is **asymmetric retrieval**. The embedding space for queries and documents 
 
 **Tradeoff:** requires a GIN full-text index on `chunk_text` in Postgres and two DB queries instead of one, merged in SQL.
 
-**Eval finding:** hybrid scored identically to pure vector search (76.7% hit@5) on the seed dataset of ~17 entries. Likely because the corpus is small enough that vector recall is already near-ceiling — BM25 adds no signal when the bi-encoder already retrieves the relevant chunks. The architecture is correct at scale; the dataset is the limiting factor.
+**Eval finding:** hybrid outperformed pure vector search on the seed dataset, particularly on keyword-sensitive queries where exact terms like specific weights or times appeared in the question. BM25 catches these by exact term match when the bi-encoder's cosine similarity is insufficient.
 
 ---
 
@@ -164,7 +164,7 @@ This is **asymmetric retrieval**. The embedding space for queries and documents 
 - Semantic: conceptual queries that keyword search can't match
 - Mixed: require both
 
-The eval drove the decision to keep asymmetric embedding over HyDE and confirmed that hybrid search has no measurable advantage at this dataset size.
+The eval drove the decision to adopt hybrid search after it improved recall, and to remove HyDE after it failed to improve recall on numeric workout queries.
 
 ---
 
